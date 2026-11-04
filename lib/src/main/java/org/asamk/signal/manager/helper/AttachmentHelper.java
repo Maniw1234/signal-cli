@@ -7,6 +7,7 @@ import org.asamk.signal.manager.config.ServiceConfig;
 import org.asamk.signal.manager.internal.SignalDependencies;
 import org.asamk.signal.manager.storage.AttachmentStore;
 import org.asamk.signal.manager.util.AttachmentUtils;
+import org.asamk.signal.manager.util.DataURI;
 import org.asamk.signal.manager.util.IOUtils;
 import org.asamk.signal.manager.util.MimeUtils;
 import org.asamk.signal.manager.util.Utils;
@@ -30,7 +31,10 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
 
@@ -83,7 +87,11 @@ public class AttachmentHelper {
             for (var i = 0; i < attachmentStreams.size(); i++) {
                 final var attachment = attachments.get(i);
                 try {
-                    attachmentPointers.add(uploader.upload(attachmentStreams.get(i)));
+                    var pointer = uploader.upload(attachmentStreams.get(i));
+                    if (voiceNote) {
+                        pointer = withAudioMetadata(pointer, attachment);
+                    }
+                    attachmentPointers.add(pointer);
                 } catch (IOException e) {
                     throw invalid(describe(attachment, inlineAttachmentLabel(i)), e);
                 }
@@ -221,6 +229,76 @@ public class AttachmentHelper {
     private SignalServiceAttachmentStream createAttachmentStream(final StreamDetails streamDetails) throws IOException {
         final var uploadSpec = getResumableUploadSpec(streamDetails);
         return AttachmentUtils.createAttachmentStream(streamDetails, Optional.empty(), uploadSpec);
+    }
+
+    /**
+     * Adds a voice note's waveform and duration, when given as data URI parameters, so that Signal
+     * clients can show them before the audio is downloaded:
+     * {@code data:audio/aac;filename=a.aac;waveform=<base64url, at most 100 bytes>;duration=<seconds>;base64,...}
+     * Each waveform byte is one bar (0 = silence, 255 = loudest). Invalid values are ignored.
+     */
+    static SignalServiceAttachmentPointer withAudioMetadata(
+            final SignalServiceAttachmentPointer pointer,
+            final String attachment
+    ) {
+        if (!isInline(attachment)) {
+            return pointer;
+        }
+        final var comma = attachment.indexOf(',');
+        if (comma < 0) {
+            return pointer;
+        }
+        final Map<String, String> parameters;
+        try {
+            // parse only the header, the data part is not needed here
+            parameters = DataURI.of(attachment.substring(0, comma) + ",AAAA").parameter();
+        } catch (IllegalArgumentException e) {
+            return pointer;
+        }
+        byte[] waveform = null;
+        Float duration = null;
+        try {
+            final var w = parameters.get("waveform");
+            if (w != null && !w.isEmpty()) {
+                waveform = Base64.getUrlDecoder().decode(w);
+                if (waveform.length > 100) {
+                    waveform = Arrays.copyOf(waveform, 100);
+                }
+            }
+            final var d = parameters.get("duration");
+            if (d != null && !d.isEmpty()) {
+                final var seconds = Float.parseFloat(d);
+                if (Float.isFinite(seconds) && seconds > 0) {
+                    duration = seconds;
+                }
+            }
+        } catch (IllegalArgumentException e) {
+            logger.debug("Ignoring invalid voice note waveform/duration: {}", e.getMessage());
+        }
+        if (waveform == null && duration == null) {
+            return pointer;
+        }
+        return new SignalServiceAttachmentPointer(pointer.getCdnNumber(),
+                pointer.getRemoteId(),
+                pointer.getContentType(),
+                pointer.getKey(),
+                pointer.getSize(),
+                pointer.getPreview(),
+                pointer.getWidth(),
+                pointer.getHeight(),
+                pointer.getDigest(),
+                pointer.getIncrementalDigest(),
+                pointer.getIncrementalMacChunkSize(),
+                pointer.getFileName(),
+                pointer.getVoiceNote(),
+                pointer.isBorderless(),
+                pointer.isGif(),
+                pointer.getCaption(),
+                pointer.getBlurHash(),
+                pointer.getUploadTimestamp(),
+                pointer.getUuid(),
+                waveform,
+                duration);
     }
 
     private static String describe(final String attachment, final String inlineLabel) {
