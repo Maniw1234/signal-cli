@@ -15,7 +15,7 @@ public record DataURI(String mediaType, Map<String, String> parameter, byte[] da
     public static final Pattern DATA_URI_PATTERN = Pattern.compile(
             "\\Adata:(?<type>.+?/.+?)?(?<parameters>;.+?=.+?)?(?<base64>;base64)?,(?<data>.+)\\z",
             Pattern.CASE_INSENSITIVE);
-    public static final Pattern PARAMETER_PATTERN = Pattern.compile("\\G;(?<key>.+)=(?<value>.+)",
+    public static final Pattern PARAMETER_PATTERN = Pattern.compile("\\G;(?<key>[^;=]+)=(?<value>[^;]*)",
             Pattern.CASE_INSENSITIVE);
 
     /**

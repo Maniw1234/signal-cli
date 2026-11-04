@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Parse data URI attachments with more than one parameter, e.g. a file name and a charset
+
 ## [0.14.9] - 2026-10-07
 
 ### Added
