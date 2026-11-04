@@ -22,15 +22,18 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -93,6 +96,38 @@ class AttachmentHelperTest {
                         .map(p -> p.getFileName().orElseThrow())
                         .toList());
         assertEquals(3, uploader.specs);
+    }
+
+    @Test
+    void audioWaveformAndDurationAreAddedByPosition() throws Exception {
+        final var waveform = new byte[]{0, 64, (byte) 128, (byte) 255};
+        final var pointers = helper(new FakeUploader()).uploadAttachments(List.of(inline("one"),
+                inline("two"),
+                inline("three")),
+                List.of(),
+                List.of(),
+                List.of("", Base64.getEncoder().encodeToString(waveform)),
+                Arrays.asList(4.5f, null),
+                true);
+
+        final var first = pointers.get(0).asPointer();
+        assertNull(first.getAudioWaveform());
+        assertEquals(4.5f, first.getAudioDurationSeconds());
+        final var second = pointers.get(1).asPointer();
+        assertArrayEquals(waveform, second.getAudioWaveform());
+        assertNull(second.getAudioDurationSeconds());
+        assertEquals("two", second.getFileName().orElseThrow());
+        assertEquals(3, second.getCdnNumber());
+        final var third = pointers.get(2).asPointer();
+        assertNull(third.getAudioWaveform());
+        assertNull(third.getAudioDurationSeconds());
+    }
+
+    @Test
+    void pointerWithoutAudioMetadataIsReturnedUnchanged() {
+        final var pointer = new FakeUploader().pointer("audio/aac", "a.aac", 4);
+        assertSame(pointer, AttachmentHelper.withAudioMetadata(pointer, null, null));
+        assertSame(pointer, AttachmentHelper.withAudioMetadata(pointer, "", null));
     }
 
     @Test
@@ -265,11 +300,15 @@ class AttachmentHelperTest {
             if (uploads.size() == failUploadOnCall) {
                 throw uploadFailure;
             }
+            return pointer(stream.getContentType(), fileName, (int) stream.getLength());
+        }
+
+        SignalServiceAttachmentPointer pointer(final String contentType, final String fileName, final int size) {
             return new SignalServiceAttachmentPointer(3,
                     SignalServiceAttachmentRemoteId.from("cdn-key", 3),
-                    stream.getContentType(),
+                    contentType,
                     new byte[64],
-                    Optional.of((int) stream.getLength()),
+                    Optional.of(size),
                     Optional.empty(),
                     0,
                     0,

@@ -8,6 +8,8 @@ public record Message(
         List<String> attachments,
         List<AttachmentDimensions> attachmentDimensions,
         List<String> attachmentBlurHashes,
+        List<String> attachmentWaveforms,
+        List<Float> attachmentDurations,
         boolean viewOnce,
         boolean voiceNote,
         List<Mention> mentions,

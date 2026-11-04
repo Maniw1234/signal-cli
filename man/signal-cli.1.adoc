@@ -374,6 +374,15 @@ Specify a BlurHash (https://blurha.sh) for the attachment at the same position i
 Use an empty string to skip one.
 e.g.: `--attachment a.jpg clip.mp4 --attachment-dimensions '' 1080x1920 --attachment-blurhash '' 'LEHV6nWB2yk8pyo0adR*.7kCMdnj'`
 
+*--attachment-waveform* [WAVEFORM [WAVEFORM ...]]::
+Specify the waveform of the audio attachment at the same position in `--attachment`, which clients show for voice notes before they're downloaded.
+Each waveform is base64 encoded with one byte per bar (0 = silence, 255 = loudest), at most 100 bars.
+Use an empty string to skip one.
+
+*--attachment-duration* [SECONDS [SECONDS ...]]::
+Specify the duration in seconds of the audio attachment at the same position in `--attachment`, which clients show for voice notes before they're downloaded.
+Use an empty string to skip one.
+
 *--view-once*::
 Send the message as a view once message.
 A conformant client will only allow the receiver to view the message once.

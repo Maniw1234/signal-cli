@@ -30,6 +30,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -73,6 +74,8 @@ public class AttachmentHelper {
             final List<String> attachments,
             final List<AttachmentDimensions> dimensions,
             final List<String> blurHashes,
+            final List<String> waveforms,
+            final List<Float> durations,
             boolean voiceNote
     ) throws AttachmentInvalidException {
         final var attachmentStreams = createAttachmentStreams(attachments, dimensions, blurHashes, voiceNote);
@@ -83,7 +86,11 @@ public class AttachmentHelper {
             for (var i = 0; i < attachmentStreams.size(); i++) {
                 final var attachment = attachments.get(i);
                 try {
-                    attachmentPointers.add(uploader.upload(attachmentStreams.get(i)));
+                    final var waveform = i < waveforms.size() ? waveforms.get(i) : null;
+                    final var duration = i < durations.size() ? durations.get(i) : null;
+                    attachmentPointers.add(withAudioMetadata(uploader.upload(attachmentStreams.get(i)),
+                            waveform,
+                            duration));
                 } catch (IOException e) {
                     throw invalid(describe(attachment, inlineAttachmentLabel(i)), e);
                 }
@@ -95,7 +102,7 @@ public class AttachmentHelper {
     }
 
     public List<SignalServiceAttachment> uploadAttachments(final List<String> attachments) throws AttachmentInvalidException {
-        return uploadAttachments(attachments, List.of(), List.of(), false);
+        return uploadAttachments(attachments, List.of(), List.of(), List.of(), List.of(), false);
     }
 
     private List<SignalServiceAttachmentStream> createAttachmentStreams(
@@ -221,6 +228,42 @@ public class AttachmentHelper {
     private SignalServiceAttachmentStream createAttachmentStream(final StreamDetails streamDetails) throws IOException {
         final var uploadSpec = getResumableUploadSpec(streamDetails);
         return AttachmentUtils.createAttachmentStream(streamDetails, Optional.empty(), uploadSpec);
+    }
+
+    /**
+     * Adds the waveform and duration of an audio attachment, which clients show before it's downloaded.
+     * The upload result doesn't carry them, so the pointer is copied with both fields set.
+     */
+    static SignalServiceAttachmentPointer withAudioMetadata(
+            final SignalServiceAttachmentPointer pointer,
+            final String waveform,
+            final Float duration
+    ) {
+        final var waveformBytes = waveform == null || waveform.isEmpty() ? null : Base64.getDecoder().decode(waveform);
+        if (waveformBytes == null && duration == null) {
+            return pointer;
+        }
+        return new SignalServiceAttachmentPointer(pointer.getCdnNumber(),
+                pointer.getRemoteId(),
+                pointer.getContentType(),
+                pointer.getKey(),
+                pointer.getSize(),
+                pointer.getPreview(),
+                pointer.getWidth(),
+                pointer.getHeight(),
+                pointer.getDigest(),
+                pointer.getIncrementalDigest(),
+                pointer.getIncrementalMacChunkSize(),
+                pointer.getFileName(),
+                pointer.getVoiceNote(),
+                pointer.isBorderless(),
+                pointer.isGif(),
+                pointer.getCaption(),
+                pointer.getBlurHash(),
+                pointer.getUploadTimestamp(),
+                pointer.getUuid(),
+                waveformBytes,
+                duration);
     }
 
     private static String describe(final String attachment, final String inlineLabel) {

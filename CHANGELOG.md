@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `send --attachment-waveform` and `--attachment-duration` to set the waveform and duration that clients show for voice notes before they're downloaded
+
 ## [0.14.9] - 2026-10-07
 
 ### Added

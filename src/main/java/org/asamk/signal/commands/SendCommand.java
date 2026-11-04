@@ -26,6 +26,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
 import java.util.regex.Pattern;
@@ -36,6 +37,7 @@ import static org.asamk.signal.util.SendMessageResultUtils.outputResult;
 public class SendCommand implements JsonRpcLocalCommand {
 
     private static final Logger logger = LoggerFactory.getLogger(SendCommand.class);
+    private static final int MAX_WAVEFORM_BARS = 100;
     private static final String BLURHASH_DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~";
 
     @Override
@@ -120,6 +122,16 @@ public class SendCommand implements JsonRpcLocalCommand {
                 .nargs("*")
                 .help("Specify a BlurHash (https://blurha.sh) for each attachment in order, which clients show "
                         + "while it's downloading. Use an empty string to skip one.");
+        subparser.addArgument("--attachment-waveform")
+                .nargs("*")
+                .help("Specify the waveform of each audio attachment in order, which clients show for voice notes "
+                        + "before they're downloaded. Each waveform is base64 encoded, with one byte (0 = silence, "
+                        + "255 = loudest) for each bar, at most " + MAX_WAVEFORM_BARS + " bars. "
+                        + "Use an empty string to skip one.");
+        subparser.addArgument("--attachment-duration")
+                .nargs("*")
+                .help("Specify the duration in seconds of each audio attachment in order, which clients show for "
+                        + "voice notes before they're downloaded. Use an empty string to skip one.");
     }
 
     @Override
@@ -189,6 +201,13 @@ public class SendCommand implements JsonRpcLocalCommand {
                 : parseAttachmentDimensions(dimensionStrings);
         final var blurHashes = ns.<String>getList("attachment-blurhash");
         final var attachmentBlurHashes = blurHashes == null ? List.<String>of() : parseAttachmentBlurHashes(blurHashes);
+        final var waveforms = ns.<String>getList("attachment-waveform");
+        final var attachmentWaveforms = waveforms == null ? List.<String>of() : parseAttachmentWaveforms(waveforms);
+        // JSON-RPC clients may pass numbers instead of strings
+        final var durationStrings = ns.<Object>getList("attachment-duration");
+        final var attachmentDurations = durationStrings == null
+                ? List.<Float>of()
+                : parseAttachmentDurations(durationStrings);
 
         final var selfNumber = m.getSelfNumber();
 
@@ -266,6 +285,8 @@ public class SendCommand implements JsonRpcLocalCommand {
                     attachments,
                     attachmentDimensions,
                     attachmentBlurHashes,
+                    attachmentWaveforms,
+                    attachmentDurations,
                     viewOnce,
                     voiceNote,
                     mentions,
@@ -333,6 +354,57 @@ public class SendCommand implements JsonRpcLocalCommand {
             }
         }
         return blurHashes;
+    }
+
+    // Accepts standard or URL-safe base64, with or without padding, and returns standard base64.
+    private List<String> parseAttachmentWaveforms(final List<String> waveforms) throws UserErrorException {
+        final var result = new ArrayList<String>();
+        for (final var waveform : waveforms) {
+            if (waveform.isEmpty()) {
+                result.add("");
+                continue;
+            }
+            final byte[] bars;
+            try {
+                final var standard = waveform.replace('-', '+').replace('_', '/');
+                bars = Base64.getDecoder().decode(standard + "=".repeat((4 - standard.length() % 4) % 4));
+            } catch (IllegalArgumentException e) {
+                throw new UserErrorException("Invalid attachment waveform (" + waveform + ") expected base64", e);
+            }
+            if (bars.length == 0 || bars.length > MAX_WAVEFORM_BARS) {
+                throw new UserErrorException("Invalid attachment waveform ("
+                        + waveform
+                        + ") expected 1 to "
+                        + MAX_WAVEFORM_BARS
+                        + " bars");
+            }
+            result.add(Base64.getEncoder().encodeToString(bars));
+        }
+        return result;
+    }
+
+    private List<Float> parseAttachmentDurations(final List<Object> durationValues) throws UserErrorException {
+        final var durations = new ArrayList<Float>();
+        for (final var value : durationValues) {
+            final var duration = value == null ? "" : String.valueOf(value);
+            if (duration.isEmpty()) {
+                durations.add(null);
+                continue;
+            }
+            final float seconds;
+            try {
+                seconds = Float.parseFloat(duration);
+            } catch (NumberFormatException e) {
+                throw new UserErrorException("Invalid attachment duration (" + duration + ") expected seconds", e);
+            }
+            if (!Float.isFinite(seconds) || seconds <= 0) {
+                throw new UserErrorException("Invalid attachment duration ("
+                        + duration
+                        + ") expected a positive number of seconds");
+            }
+            durations.add(seconds);
+        }
+        return durations;
     }
 
     // Same check the BlurHash decoders make: the first digit fixes the length.

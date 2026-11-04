@@ -127,6 +127,82 @@ class SendCommandParsingTest {
         }
     }
 
+    @Test
+    void cliPreservesWaveformAndDurationPositions() throws Exception {
+        final var parser = ArgumentParsers.newFor("signal-cli", DefaultSettings.VERSION_0_9_0_DEFAULT_SETTINGS)
+                .includeArgumentNamesAsKeysInResult(true)
+                .build();
+        new SendCommand().attachToSubparser(parser.addSubparsers().addParser("send"));
+        final var message = send(parser.parseArgs(new String[]{
+                "send",
+                "--note-to-self",
+                "-a",
+                "photo.jpg",
+                "portrait.mp4",
+                "other.mp4",
+                "--attachment-waveform",
+                "",
+                "AED/",
+                "--attachment-duration",
+                "12.5",
+                ""
+        }));
+
+        assertEquals(List.of("", "AED/"), message.attachmentWaveforms());
+        assertEquals(Arrays.asList(12.5f, null), message.attachmentDurations());
+    }
+
+    @Test
+    void jsonRpcNormalizesUrlSafeUnpaddedWaveforms() throws Exception {
+        final var message = send(new JsonRpcNamespace(Map.of("noteToSelf",
+                true,
+                "attachments",
+                ATTACHMENTS,
+                "attachmentWaveform",
+                List.of("AED_", "_w"),
+                "attachmentDuration",
+                List.of(3, 1.25, "2"))));
+
+        assertEquals(List.of("AED/", "/w=="), message.attachmentWaveforms());
+        assertEquals(List.of(3f, 1.25f, 2f), message.attachmentDurations());
+    }
+
+    @Test
+    void omittedWaveformsAndDurationsKeepExistingBehavior() throws Exception {
+        final var message = send(new JsonRpcNamespace(Map.of("noteToSelf", true, "attachments", ATTACHMENTS)));
+        assertEquals(List.of(), message.attachmentWaveforms());
+        assertEquals(List.of(), message.attachmentDurations());
+    }
+
+    @Test
+    void rejectsMalformedWaveformsBeforeSending() {
+        final var tooLong = java.util.Base64.getEncoder().encodeToString(new byte[101]);
+        for (final var value : List.of("not base64!", "A", tooLong)) {
+            assertThrows(UserErrorException.class,
+                    () -> send(new JsonRpcNamespace(Map.of("noteToSelf",
+                            true,
+                            "attachments",
+                            ATTACHMENTS,
+                            "attachmentWaveform",
+                            List.of(value)))),
+                    value);
+        }
+    }
+
+    @Test
+    void rejectsInvalidDurationsBeforeSending() {
+        for (final var value : List.of("0", "-1", "abc", "NaN", "Infinity")) {
+            assertThrows(UserErrorException.class,
+                    () -> send(new JsonRpcNamespace(Map.of("noteToSelf",
+                            true,
+                            "attachments",
+                            ATTACHMENTS,
+                            "attachmentDuration",
+                            List.of(value)))),
+                    value);
+        }
+    }
+
     private JsonRpcNamespace blurHashNamespace(List<String> blurHashes) {
         return new JsonRpcNamespace(Map.of("noteToSelf",
                 true,

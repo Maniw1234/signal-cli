@@ -966,6 +966,8 @@ public class ManagerImpl implements Manager {
                     .uploadAttachments(message.attachments(),
                             message.attachmentDimensions(),
                             message.attachmentBlurHashes(),
+                            message.attachmentWaveforms(),
+                            message.attachmentDurations(),
                             message.voiceNote());
             if (!additionalAttachments.isEmpty()) {
                 additionalAttachments.addAll(uploadedAttachments);
