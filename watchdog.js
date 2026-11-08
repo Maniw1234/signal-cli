@@ -2,7 +2,7 @@
 // watchdog v2: runs every minute (cron). Keeps the bots healthy without you, and learns.
 //  Known fixes (automatic, silent): crashed/stopped bot -> restart; empty or broken file blocking the
 //  outbox -> move aside + restart filer; Signal service hanging / posts failing -> restart it;
-//  memory almost gone -> restart the biggest bot.
+//  memory almost gone -> restart the biggest bot; disk filling up -> clear logs and caches.
 //  Anything else (or a known fix that keeps repeating) is an "incident":
 //   1. If the playbook (its memory) has a fix that worked before for this kind of incident, use it.
 //   2. Otherwise ask the AI (Groq), showing it past incidents and what worked. The AI may pick ONE
@@ -39,6 +39,8 @@ const HEALTH_URL = process.env.HEALTH_URL || 'http://127.0.0.1:3000/health';
 const RELAY_STATUS = path.join(HOME, 'signal-relay', 'status.json');
 const PM2_LOGS = path.join(HOME, '.pm2', 'logs');
 const MIN_FREE_MB = Number(process.env.MIN_FREE_MB || 60);
+const DISK_CLEAN_PCT = Number(process.env.DISK_CLEAN_PCT || 85);  // clean up above this
+const DISK_STUCK_PCT = Number(process.env.DISK_STUCK_PCT || 92);  // still above this after cleaning: incident
 const NTFY = (process.env.NTFY_SERVER || 'https://ntfy.sh').replace(/\/$/, '');
 const TOPIC = process.env.NTFY_TOPIC || '';
 const QUIET = process.env.QUIET !== '0';            // silent unless a human is needed
@@ -126,6 +128,10 @@ function memAvailableMb() {
     const m = fs.readFileSync('/proc/meminfo', 'utf8').match(/MemAvailable:\s+(\d+)/);
     return m ? Math.round(Number(m[1]) / 1024) : null;
   } catch { return null; }
+}
+
+function diskUsedPct(p = process.env.DISK_PATH || '/') {
+  try { const s = fs.statfsSync(p); return Math.round(100 * (1 - s.bavail / s.blocks)); } catch { return null; }
 }
 
 async function getProcs() {
@@ -410,7 +416,21 @@ async function main() {
     }
   }
 
-  // 6) problems reported by the feed's health page with no known fix
+  // 6) disk filling up -> empty bot logs, trim system logs and package cache
+  const used = diskUsedPct();
+  if (used !== null && used >= DISK_CLEAN_PCT && cooldown('disk-clean', 30 * MIN) && !PAUSED) {
+    await run(PM2, ['flush'], 60000);
+    await run('sudo', ['-n', 'journalctl', '--vacuum-size=100M'], 120000);
+    await run('sudo', ['-n', 'apt-get', 'clean'], 120000);
+    const after = diskUsedPct();
+    log(`disk cleanup: ${used}% -> ${after}%`);
+    await notify('Fixed: disk filling up', `Disk was ${used}% full; cleared logs and caches. Now ${after}%.`);
+    if (after !== null && after >= DISK_STUCK_PCT) {
+      await incident('disk', `Disk is still ${after}% full after clearing logs and caches. Something else is filling it.`, procs, [], true);
+    }
+  }
+
+  // 7) problems reported by the feed's health page with no known fix
   try {
     const h = await (await fetch(HEALTH_URL, { signal: AbortSignal.timeout(15000) })).json();
     for (const p of (Array.isArray(h.problems) ? h.problems : []).map(String)) {
